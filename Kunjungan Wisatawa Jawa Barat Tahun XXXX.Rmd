@@ -1,0 +1,188 @@
+---
+title: "Data Spasial"
+output: html_notebook
+---
+
+# Analisis Data Spasial Kunjungan Wisatawan Provinsi Jawa Barat
+
+```{r}
+library(openxlsx)
+dapar = read.xlsx("C:/Users/hikah/Downloads/uts spasial/Data UTS.xlsx")
+dapar
+```
+
+Diatas adalah tampilan dari 6 data teratas dari dataset yang akna digunakan
+
+## Viasualisasi Persebaran Kunjungan Wisatawan Jawa Barat Tahun xxxx
+
+```{r}
+library(spdep)
+library(sf)
+library(raster)
+petajabar2 = st_read(dsn="C:/Users/hikah/Downloads/uts spasial/petaJabar2", layer="Jabar2")
+```
+
+```{r}
+k <- 50
+colfunc <- colorRampPalette(c("green","yellow","red"))
+color <- colfunc(k)
+
+petajabar2$JKW2 <- dapar$Jumlah_Kunjungan_Wisatawan
+
+library(tmap)
+tm_shape(petajabar2) +
+  tm_fill("JKW2", style = "cont", palette = colfunc(k)) +
+  tm_layout(title = "Jumlah_Kunjungan_Wisatawan") +
+  tm_legend(outside = TRUE, 
+            title = "Jumlah_Kunjungan_Wisatawan", 
+            position = c("right", "bottom"))
+```
+
+Terlihat bahwa dari hasil visualisasi persebaran data cukup merata, hanya saja terdapat pengelompokkan di beberapa daerah daera tertentu. Hal tersbeut ditandai dengan warna yang cukup kontras pada wilayah wilayah tertentu.
+
+Hal ini berarti persebaran kunjungan wisatawan Jawa Barat cukup merata dan terdapat beberapa daerah yang lebih populer dibandingkan daerah lainnya seperti. Derah tersebut yakni **Bogor, Subang, Garut, Kota Bandung.**
+
+## Moran Test
+
+```{r}
+w<-poly2nb(petajabar2) 
+w_matrix <-nb2mat(w,zero.policy = TRUE, style="B"); 
+ww<-nb2listw(w, zero.policy = TRUE)
+```
+
+```{r}
+set.ZeroPolicyOption(TRUE)
+moran(dapar$Jumlah_Kunjungan_Wisatawan, ww, n = length(ww$neighbours), S0 = Szero(ww))
+moran.test(dapar$Jumlah_Kunjungan_Wisatawan, ww, randomisation = TRUE, alternative = "greater")
+moran.plot(dapar$Jumlah_Kunjungan_Wisatawan, ww, labels = dapar$`Kabupaten/Kota`)
+
+```
+
+Uji moran test disini digunakna untuk melihat apakah data memiliki dependensi spasial.
+Terlihat bahwa p-value dari uji moran sebesar (0.2653) \> dari alfa (0.05) sehingga dapat
+disimpulkan bahwa data tidak memiliki dependensi spasial.
+
+## Regresi Klasik (OLS)
+
+```{r}
+#OLS
+reg.klasik = lm(Jumlah_Kunjungan_Wisatawan~ Jumlah_Hotel_Berbintang+Jumlah_Rumah_Makan+Jumlah_Restoran, data =dapar)
+err.regklasik<-residuals(reg.klasik)
+summary(reg.klasik)
+
+```
+
+### Uji Asumsi Regresi Klasik
+
+```{r}
+#Normalitas
+library(nortest)
+library(car)
+library(DescTools)
+library(lmtest)
+ad.test(err.regklasik)
+hist(err.regklasik)
+qqnorm(err.regklasik,datax=T)
+qqline(rnorm(length(err.regklasik),mean(err.regklasik),sd(err.regklasik)),datax=T, col="red")
+
+#hetero
+bptest(reg.klasik)
+
+#korelasi spasial
+set.ZeroPolicyOption(TRUE)
+w<-poly2nb(petajabar2) 
+ww<-nb2listw(w)
+lm.morantest(reg.klasik, ww, alternative="two.sided")
+moran.test(err.regklasik, ww,randomisation=F, alternative="two.sided")
+
+
+#UJI LM
+LM<-lm.LMtests(reg.klasik, nb2listw(w, style="W"), test=c("LMerr", "LMlag","RLMerr","RLMlag","SARMA"))
+summary(LM)
+
+```
+
+## Model Spasial
+
+## 1. Model SEM
+
+### Modelling
+
+```{r}
+#SEM
+set.ZeroPolicyOption(TRUE)
+library(spatialreg)
+sem<-errorsarlm(Jumlah_Kunjungan_Wisatawan~ Jumlah_Hotel_Berbintang+Jumlah_Rumah_Makan+Jumlah_Restoran, data =dapar,nb2listw(w))
+summary(sem)
+```
+
+### Pengujian Asumsi
+
+```{r}
+#uji asumsi
+err.sem<-residuals(sem)
+ad.test(err.sem)
+bptest.Sarlm(sem)
+moran.test(err.sem, ww, alternative="two.sided")
+```
+
+## 2. Model SAR
+
+### Modelling
+
+```{r}
+#SAR
+sar<-lagsarlm(Jumlah_Kunjungan_Wisatawan~ Jumlah_Hotel_Berbintang+Jumlah_Rumah_Makan+Jumlah_Restoran, data =dapar,nb2listw(w))
+summary(sar)
+```
+
+### Pengujian Asumsi
+
+```{r}
+#uji asumsi SAR
+err.sar<-residuals(sar)
+ad.test(err.sar)
+bptest.Sarlm(sar)
+moran.test(err.sar, ww, alternative="two.sided")
+```
+
+## 3. Model SARMA
+
+### Modelling
+
+```{r}
+#SARMA
+gsm<-sacsarlm(Jumlah_Kunjungan_Wisatawan~ Jumlah_Hotel_Berbintang+Jumlah_Rumah_Makan+Jumlah_Restoran, data =dapar,nb2listw(w))
+summary(gsm)
+```
+
+### Pengujian Asumsi
+
+```{r}
+#Ujiasumsi SARMA
+err.gsm<-residuals(gsm)
+ad.test(err.gsm)
+bptest.Sarlm(gsm)
+moran.test(err.gsm, ww, alternative="two.sided")
+```
+
+## Kesimpulan
+
+-   Dari pengujian model diatas terlihat bahwa seluruh p-value dari model berada diaats 0.05 yang berarti bahwa tidak ada model spasial yang benar benar dapat memodelkan data Jumlah Kunjungan Pariwisata provinsi jawa barat dengan baik.
+
+-   Akan tetapi model SEM dapat dijadikan pertimbangan untuk dipilih karena model tersebut memiliki p-value paling kecil dibandingan model SAR dan SARMA.
+
+```{=html}
+<!-- -->
+```
+-   Model SEM dilipih untuk digunakan sebagai model spasial yang akan digunakan karena memiliki nilai AIC paling rendah. Hal tersbeut berarti model SEM merupakan model yang paling akurat dibandingkan model lainnya
+
+-   Kesalahan dalam model tidak terdistribusi secara normal. Ini berarti, ada variasi yang tidak biasa dalam data yang diperoleh.
+
+-   tidak ditemukan adanya ketergantungan antara variabel-variabel yang dianalisis. Ini berarti, faktor-faktor seperti jumlah restoran, jumlah rumah makan, jumlah hotel berbintang , atau faktor lainnya ydang dimasukkan dalam penelitian tidak secara langsung mempengaruhi satu sama lain dalam konteks kunjungan wisata di Jawa Barat.
+
+-   Kesalahan dalam model cenderung memiliki variasi yang konsisten, atau yang disebut homoskedastisitas. Ini berarti, tidak ada pola yang jelas dalam kesalahan yang kami temukan.
+
+
+
+
